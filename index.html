@@ -1,1 +1,368 @@
- <h1>Coming soon</h1>
+ <!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>My Budget Tracker</title>
+<script src="https://alcdn.msauth.net/browser/3.7.1/js/msal-browser.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f8fa; --card-bg: #ffffff; --text: #1a1d23; --text-muted: #6b7280;
+    --border: #e5e7eb; --accent: #2563eb; --income: #16a34a; --income-soft: #ecfdf3;
+    --expense: #dc2626; --expense-soft: #fef2f2; --debt: #b91c1c;
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    padding: 24px 16px 60px; min-height: 100vh;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  .subtitle { color: var(--text-muted); font-size: 0.9rem; margin: 0 0 20px; }
+
+  .card {
+    background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px; box-shadow: var(--shadow); margin-bottom: 20px;
+  }
+  .card h2 { font-size: 1rem; margin: 0 0 14px; }
+
+  .signin-box { text-align: center; padding: 40px 20px; }
+  .signin-box p { color: var(--text-muted); margin-bottom: 20px; }
+
+  button {
+    padding: 11px 18px; border: none; border-radius: 8px; background: var(--accent);
+    color: white; font-size: 0.95rem; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary { background: var(--card-bg); color: var(--accent); border: 1px solid var(--accent); }
+
+  .summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-bottom: 20px; }
+  @media (min-width: 480px) { .summary { grid-template-columns: repeat(4, 1fr); } }
+  .summary-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 14px; box-shadow: var(--shadow); }
+  .summary-card .label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); margin-bottom: 6px; }
+  .summary-card .value { font-size: 1.15rem; font-weight: 700; word-break: break-word; }
+  .value.income { color: var(--income); }
+  .value.expense { color: var(--expense); }
+  .value.debt { color: var(--debt); }
+
+  form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  form .full { grid-column: 1 / -1; }
+  label { display: block; font-size: 0.78rem; color: var(--text-muted); margin-bottom: 4px; }
+  input, select {
+    width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--bg); color: var(--text); font-size: 0.92rem;
+  }
+  .type-toggle { display: flex; gap: 8px; }
+  .type-btn {
+    flex: 1; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text-muted); font-size: 0.88rem; cursor: pointer; text-align: center;
+  }
+  .type-btn.active[data-type="income"] { background: var(--income-soft); border-color: var(--income); color: var(--income); font-weight: 600; }
+  .type-btn.active[data-type="expense"] { background: var(--expense-soft); border-color: var(--expense); color: var(--expense); font-weight: 600; }
+
+  .cat-bars { display: flex; flex-direction: column; gap: 10px; }
+  .cat-bar-row { display: flex; flex-direction: column; gap: 4px; }
+  .cat-bar-label { display: flex; justify-content: space-between; font-size: 0.82rem; }
+  .cat-bar-track { background: var(--border); border-radius: 6px; height: 8px; overflow: hidden; }
+  .cat-bar-fill { height: 100%; background: var(--accent); border-radius: 6px; }
+
+  .status-msg { font-size: 0.85rem; margin-top: 10px; }
+  .status-msg.error { color: var(--expense); }
+  .status-msg.success { color: var(--income); }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .top-bar .who { font-size: 0.85rem; color: var(--text-muted); }
+  .hidden { display: none !important; }
+  .spinner { text-align: center; color: var(--text-muted); padding: 30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div id="signedOutView">
+    <h1>💰 My Budget Tracker</h1>
+    <p class="subtitle">Connects live to budget-tracker.xlsx in your OneDrive.</p>
+    <div class="card signin-box">
+      <p>Sign in with your Microsoft account to load your budget.</p>
+      <button id="loginBtn">Sign in with Microsoft</button>
+      <p id="loginError" class="status-msg error"></p>
+    </div>
+  </div>
+
+  <div id="signedInView" class="hidden">
+    <div class="top-bar">
+      <div>
+        <h1 style="margin-bottom:2px;">💰 My Budget Tracker</h1>
+        <div class="who" id="whoAmI"></div>
+      </div>
+      <button class="secondary" id="logoutBtn">Sign out</button>
+    </div>
+
+    <div id="loadingMsg" class="spinner">Loading your data…</div>
+
+    <div id="dashboard" class="hidden">
+      <div class="summary">
+        <div class="summary-card">
+          <div class="label">Income</div>
+          <div class="value income" id="valIncome">–</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Expenses</div>
+          <div class="value expense" id="valExpense">–</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Balance</div>
+          <div class="value" id="valBalance">–</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Debt Owed</div>
+          <div class="value debt" id="valDebt">–</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Add a transaction</h2>
+        <form id="entryForm">
+          <div class="full type-toggle">
+            <div class="type-btn active" data-type="expense" id="btnExpense">Expense</div>
+            <div class="type-btn" data-type="income" id="btnIncome">Income</div>
+          </div>
+          <div class="full">
+            <label for="desc">Description</label>
+            <input type="text" id="desc" placeholder="e.g. Groceries, Salary" required maxlength="60">
+          </div>
+          <div>
+            <label for="amount">Amount</label>
+            <input type="number" id="amount" placeholder="0.00" step="0.01" min="0.01" required>
+          </div>
+          <div>
+            <label for="date">Date</label>
+            <input type="date" id="date" required>
+          </div>
+          <div class="full">
+            <label for="category">Category</label>
+            <select id="category">
+              <option>Food</option><option>Transport</option><option>Rent/Housing</option>
+              <option>Utilities</option><option>Phone/Internet</option><option>Entertainment</option>
+              <option>Health</option><option>Education</option><option>Debt Payments</option>
+              <option>Savings</option><option>Other</option><option>Salary</option>
+              <option>Gift/Other Income</option>
+            </select>
+          </div>
+          <button type="submit" class="full" id="submitBtn">Add to spreadsheet</button>
+        </form>
+        <p id="formStatus" class="status-msg"></p>
+      </div>
+
+      <div class="card">
+        <h2>Spending by category</h2>
+        <div class="cat-bars" id="catBars"><div class="spinner">–</div></div>
+      </div>
+
+      <p class="subtitle" style="text-align:center;">Changes here save straight to your OneDrive file — open it in Excel anytime and they'll be there.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ---- CONFIG: fill these in once from your Azure app registration ----
+const CLIENT_ID = "db0e795b-c7d5-4c3d-845e-5383f8769b4a";
+const REDIRECT_URI = "https://davigra.github.io/budget-tracker/";
+const FILE_PATH = "/budget-tracker.xlsx"; // path in OneDrive root
+// -----------------------------------------------------------------------
+
+const msalConfig = {
+  auth: {
+    clientId: CLIENT_ID,
+    authority: "https://login.microsoftonline.com/common",
+    redirectUri: REDIRECT_URI
+  },
+  cache: { cacheLocation: "localStorage" }
+};
+const msalInstance = new msal.PublicClientApplication(msalConfig);
+const GRAPH_SCOPES = ["User.Read", "Files.ReadWrite"];
+const GRAPH_BASE = "https://graph.microsoft.com/v1.0/me/drive/root:" + FILE_PATH + ":/workbook";
+
+let activeAccount = null;
+
+async function getToken() {
+  const accounts = msalInstance.getAllAccounts();
+  if (accounts.length === 0) throw new Error("Not signed in");
+  activeAccount = accounts[0];
+  try {
+    const result = await msalInstance.acquireTokenSilent({ scopes: GRAPH_SCOPES, account: activeAccount });
+    return result.accessToken;
+  } catch (e) {
+    const result = await msalInstance.acquireTokenPopup({ scopes: GRAPH_SCOPES });
+    return result.accessToken;
+  }
+}
+
+async function graphFetch(path, options) {
+  const token = await getToken();
+  const res = await fetch(GRAPH_BASE + path, {
+    ...options,
+    headers: {
+      "Authorization": "Bearer " + token,
+      "Content-Type": "application/json",
+      ...(options && options.headers ? options.headers : {})
+    }
+  });
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error("Graph API error " + res.status + ": " + errBody);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function formatMoney(n) {
+  const num = Number(n) || 0;
+  const sign = num < 0 ? "-" : "";
+  return sign + "$" + Math.abs(num).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function toExcelSerial(dateStr) {
+  // dateStr is "YYYY-MM-DD" from the date input
+  const d = new Date(dateStr + "T00:00:00Z");
+  return Math.round(d.getTime() / 86400000) + 25569;
+}
+
+async function loadDashboard() {
+  document.getElementById("loadingMsg").classList.remove("hidden");
+  document.getElementById("dashboard").classList.add("hidden");
+
+  const summaryRange = await graphFetch("/worksheets('Summary')/range(address='B4:B7')");
+  const values = summaryRange.values; // [[income],[expense],[balance],[debt]]
+  document.getElementById("valIncome").textContent = formatMoney(values[0][0]);
+  document.getElementById("valExpense").textContent = formatMoney(values[1][0]);
+  const balance = Number(values[2][0]) || 0;
+  const balEl = document.getElementById("valBalance");
+  balEl.textContent = formatMoney(balance);
+  balEl.style.color = balance < 0 ? "var(--expense)" : "var(--income)";
+  document.getElementById("valDebt").textContent = formatMoney(values[3][0]);
+
+  const catRange = await graphFetch("/worksheets('Summary')/range(address='A10:B20')");
+  const rows = catRange.values.filter(r => r[0]);
+  const total = rows.reduce((s, r) => s + (Number(r[1]) || 0), 0);
+  const sorted = rows.slice().sort((a, b) => (Number(b[1]) || 0) - (Number(a[1]) || 0));
+  const catBars = document.getElementById("catBars");
+  if (sorted.length === 0 || total === 0) {
+    catBars.innerHTML = '<div class="subtitle">No expenses logged yet.</div>';
+  } else {
+    catBars.innerHTML = sorted.map(r => {
+      const amt = Number(r[1]) || 0;
+      const pct = total > 0 ? Math.round((amt / total) * 100) : 0;
+      return `<div class="cat-bar-row">
+        <div class="cat-bar-label"><span>${r[0]}</span><span>${formatMoney(amt)} (${pct}%)</span></div>
+        <div class="cat-bar-track"><div class="cat-bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join("");
+  }
+
+  document.getElementById("loadingMsg").classList.add("hidden");
+  document.getElementById("dashboard").classList.remove("hidden");
+}
+
+async function addTransactionRow(dateStr, desc, category, type, amount) {
+  const body = {
+    values: [[ toExcelSerial(dateStr), desc, category, type, amount ]]
+  };
+  return graphFetch("/tables('TransactionsTable')/rows/add", {
+    method: "POST",
+    body: JSON.stringify(body)
+  });
+}
+
+function showSignedIn(account) {
+  document.getElementById("signedOutView").classList.add("hidden");
+  document.getElementById("signedInView").classList.remove("hidden");
+  document.getElementById("whoAmI").textContent = "Signed in as " + (account.username || account.name || "");
+}
+
+function showSignedOut() {
+  document.getElementById("signedOutView").classList.remove("hidden");
+  document.getElementById("signedInView").classList.add("hidden");
+}
+
+document.getElementById("loginBtn").addEventListener("click", async () => {
+  const errEl = document.getElementById("loginError");
+  errEl.textContent = "";
+  try {
+    const result = await msalInstance.loginPopup({ scopes: GRAPH_SCOPES });
+    activeAccount = result.account;
+    showSignedIn(activeAccount);
+    await loadDashboard();
+  } catch (e) {
+    errEl.textContent = "Sign-in failed: " + e.message;
+  }
+});
+
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  msalInstance.logoutPopup();
+  showSignedOut();
+});
+
+// Type toggle
+let currentType = "expense";
+document.getElementById("btnExpense").addEventListener("click", () => setType("expense"));
+document.getElementById("btnIncome").addEventListener("click", () => setType("income"));
+function setType(type) {
+  currentType = type;
+  document.getElementById("btnExpense").classList.toggle("active", type === "expense");
+  document.getElementById("btnIncome").classList.toggle("active", type === "income");
+  document.getElementById("category").value = type === "income" ? "Salary" : "Food";
+}
+
+document.getElementById("entryForm").addEventListener("submit", async (evt) => {
+  evt.preventDefault();
+  const statusEl = document.getElementById("formStatus");
+  const submitBtn = document.getElementById("submitBtn");
+  statusEl.textContent = "";
+  statusEl.className = "status-msg";
+
+  const desc = document.getElementById("desc").value.trim();
+  const amount = parseFloat(document.getElementById("amount").value);
+  const date = document.getElementById("date").value;
+  const category = document.getElementById("category").value;
+
+  if (!desc || isNaN(amount) || amount <= 0 || !date) return;
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Saving…";
+  try {
+    await addTransactionRow(date, desc, category, currentType, amount);
+    statusEl.textContent = "Saved to your spreadsheet.";
+    statusEl.className = "status-msg success";
+    document.getElementById("desc").value = "";
+    document.getElementById("amount").value = "";
+    await loadDashboard();
+  } catch (e) {
+    statusEl.textContent = "Could not save: " + e.message;
+    statusEl.className = "status-msg error";
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Add to spreadsheet";
+  }
+});
+
+// default date to today
+document.getElementById("date").value = new Date().toISOString().slice(0, 10);
+
+// On load: check if already signed in (e.g. after a refresh)
+(async function init() {
+  const accounts = msalInstance.getAllAccounts();
+  if (accounts.length > 0) {
+    activeAccount = accounts[0];
+    showSignedIn(activeAccount);
+    try {
+      await loadDashboard();
+    } catch (e) {
+      document.getElementById("loadingMsg").textContent = "Could not load data: " + e.message;
+    }
+  }
+})();
+</script>
+</body>
+</html>
