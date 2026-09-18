@@ -68,6 +68,27 @@
   .cat-bar-track { background: var(--border); border-radius: 6px; height: 8px; overflow: hidden; }
   .cat-bar-fill { height: 100%; background: var(--accent); border-radius: 6px; }
 
+  .tx-list { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; }
+  .tx-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+  }
+  .tx-main { min-width: 0; flex: 1; }
+  .tx-desc { font-weight: 600; font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tx-meta { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+  .tx-amount { font-weight: 700; font-size: 0.92rem; white-space: nowrap; }
+  .tx-amount.income { color: var(--income); }
+  .tx-amount.expense { color: var(--expense); }
+  .tx-actions { display: flex; gap: 4px; }
+  .tx-actions button {
+    padding: 5px 9px; font-size: 0.78rem; font-weight: 500; background: var(--bg);
+    color: var(--text-muted); border: 1px solid var(--border);
+  }
+  .tx-actions button.danger:hover { color: var(--expense); border-color: var(--expense); }
+  .editing-banner {
+    background: #fff9db; border: 1px solid #f5e08c; border-radius: 8px; padding: 8px 12px;
+    font-size: 0.82rem; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;
+  }
   .status-msg { font-size: 0.85rem; margin-top: 10px; }
   .status-msg.error { color: var(--expense); }
   .status-msg.success { color: var(--income); }
@@ -122,7 +143,11 @@
       </div>
 
       <div class="card">
-        <h2>Add a transaction</h2>
+        <h2 id="formTitle">Add a transaction</h2>
+        <div id="editingBanner" class="editing-banner hidden">
+          <span>Editing an existing transaction</span>
+          <button type="button" class="secondary" id="cancelEditBtn" style="padding:4px 10px; font-size:0.78rem;">Cancel</button>
+        </div>
         <form id="entryForm">
           <div class="full type-toggle">
             <div class="type-btn active" data-type="expense" id="btnExpense">Expense</div>
@@ -153,6 +178,11 @@
           <button type="submit" class="full" id="submitBtn">Add to spreadsheet</button>
         </form>
         <p id="formStatus" class="status-msg"></p>
+      </div>
+
+      <div class="card">
+        <h2>Recent transactions</h2>
+        <div class="tx-list" id="txList"><div class="spinner">Loading…</div></div>
       </div>
 
       <div class="card">
@@ -275,6 +305,134 @@ async function addTransactionRow(dateStr, desc, category, type, amount) {
   });
 }
 
+function fromExcelSerial(serial) {
+  const ms = (Number(serial) - 25569) * 86400000;
+  return new Date(ms);
+}
+
+function formatDateDisplay(serial) {
+  const d = fromExcelSerial(serial);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function dateSerialToInputValue(serial) {
+  const d = fromExcelSerial(serial);
+  if (isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
+
+let editingRowIndex = null; // table-relative row index currently being edited
+let cachedRows = [];        // last loaded, non-blank rows: { index, date, desc, category, type, amount }
+
+async function loadTransactions() {
+  const listEl = document.getElementById("txList");
+  listEl.innerHTML = '<div class="spinner">Loading…</div>';
+  const result = await graphFetch("/tables('TransactionsTable')/rows");
+  const rows = result.value
+    .map(r => ({ index: r.index, values: r.values[0] }))
+    .filter(r => r.values[1] && String(r.values[1]).trim() !== "")
+    .map(r => ({
+      index: r.index,
+      date: r.values[0],
+      desc: r.values[1],
+      category: r.values[2],
+      type: r.values[3],
+      amount: r.values[4]
+    }));
+  // most recently added first
+  cachedRows = rows.slice().reverse();
+  const recent = cachedRows.slice(0, 15);
+
+  if (recent.length === 0) {
+    listEl.innerHTML = '<div class="subtitle">No transactions yet.</div>';
+    return;
+  }
+
+  listEl.innerHTML = recent.map(r => {
+    const isExpense = String(r.type).toLowerCase() === "expense";
+    return `<div class="tx-row" data-index="${r.index}">
+      <div class="tx-main">
+        <div class="tx-desc">${escapeHtml(r.desc)}</div>
+        <div class="tx-meta">${formatDateDisplay(r.date)} · ${escapeHtml(r.category || "")}</div>
+      </div>
+      <div class="tx-amount ${isExpense ? 'expense' : 'income'}">${isExpense ? '-' : '+'}${formatMoney(r.amount)}</div>
+      <div class="tx-actions">
+        <button type="button" class="edit-btn" data-index="${r.index}">Edit</button>
+        <button type="button" class="danger delete-btn" data-index="${r.index}">Delete</button>
+      </div>
+    </div>`;
+  }).join("");
+
+  listEl.querySelectorAll(".edit-btn").forEach(btn => {
+    btn.addEventListener("click", () => startEdit(parseInt(btn.dataset.index, 10)));
+  });
+  listEl.querySelectorAll(".delete-btn").forEach(btn => {
+    btn.addEventListener("click", () => deleteTransaction(parseInt(btn.dataset.index, 10)));
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = String(str);
+  return div.innerHTML;
+}
+
+function startEdit(index) {
+  const row = cachedRows.find(r => r.index === index);
+  if (!row) return;
+  editingRowIndex = index;
+
+  document.getElementById("desc").value = row.desc;
+  document.getElementById("amount").value = row.amount;
+  document.getElementById("date").value = dateSerialToInputValue(row.date);
+  const type = String(row.type).toLowerCase() === "income" ? "income" : "expense";
+  setType(type);
+  document.getElementById("category").value = row.category;
+
+  document.getElementById("formTitle").textContent = "Edit transaction";
+  document.getElementById("editingBanner").classList.remove("hidden");
+  document.getElementById("submitBtn").textContent = "Update transaction";
+  document.getElementById("entryForm").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function cancelEdit() {
+  editingRowIndex = null;
+  document.getElementById("entryForm").reset();
+  document.getElementById("date").value = new Date().toISOString().slice(0, 10);
+  setType("expense");
+  document.getElementById("formTitle").textContent = "Add a transaction";
+  document.getElementById("editingBanner").classList.add("hidden");
+  document.getElementById("submitBtn").textContent = "Add to spreadsheet";
+  document.getElementById("formStatus").textContent = "";
+}
+
+document.getElementById("cancelEditBtn").addEventListener("click", cancelEdit);
+
+async function updateTransactionRow(index, dateStr, desc, category, type, amount) {
+  const body = {
+    values: [[ toExcelSerial(dateStr), desc, category, type, amount ]]
+  };
+  return graphFetch(`/tables('TransactionsTable')/rows/itemAt(index=${index})`, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+}
+
+async function deleteTransaction(index) {
+  if (!confirm("Delete this transaction? This can't be undone.")) return;
+  try {
+    await graphFetch(`/tables('TransactionsTable')/rows/itemAt(index=${index})`, {
+      method: "DELETE"
+    });
+    if (editingRowIndex === index) cancelEdit();
+    await loadTransactions();
+    await loadDashboard();
+  } catch (e) {
+    alert("Could not delete: " + e.message);
+  }
+}
+
 function showSignedIn(account) {
   document.getElementById("signedOutView").classList.add("hidden");
   document.getElementById("signedInView").classList.remove("hidden");
@@ -294,6 +452,7 @@ document.getElementById("loginBtn").addEventListener("click", async () => {
     activeAccount = result.account;
     showSignedIn(activeAccount);
     await loadDashboard();
+    await loadTransactions();
   } catch (e) {
     errEl.textContent = "Sign-in failed: " + e.message;
   }
@@ -329,21 +488,29 @@ document.getElementById("entryForm").addEventListener("submit", async (evt) => {
 
   if (!desc || isNaN(amount) || amount <= 0 || !date) return;
 
+  const isEditing = editingRowIndex !== null;
   submitBtn.disabled = true;
-  submitBtn.textContent = "Saving…";
+  submitBtn.textContent = isEditing ? "Updating…" : "Saving…";
   try {
-    await addTransactionRow(date, desc, category, currentType, amount);
-    statusEl.textContent = "Saved to your spreadsheet.";
+    let successMsg;
+    if (isEditing) {
+      await updateTransactionRow(editingRowIndex, date, desc, category, currentType, amount);
+      successMsg = "Transaction updated.";
+    } else {
+      await addTransactionRow(date, desc, category, currentType, amount);
+      successMsg = "Saved to your spreadsheet.";
+    }
+    cancelEdit(); // resets the form back to "add" mode
+    statusEl.textContent = successMsg;
     statusEl.className = "status-msg success";
-    document.getElementById("desc").value = "";
-    document.getElementById("amount").value = "";
+    await loadTransactions();
     await loadDashboard();
   } catch (e) {
     statusEl.textContent = "Could not save: " + e.message;
     statusEl.className = "status-msg error";
   } finally {
     submitBtn.disabled = false;
-    submitBtn.textContent = "Add to spreadsheet";
+    submitBtn.textContent = isEditing ? "Update transaction" : "Add to spreadsheet";
   }
 });
 
@@ -358,6 +525,7 @@ document.getElementById("date").value = new Date().toISOString().slice(0, 10);
     showSignedIn(activeAccount);
     try {
       await loadDashboard();
+      await loadTransactions();
     } catch (e) {
       document.getElementById("loadingMsg").textContent = "Could not load data: " + e.message;
     }
